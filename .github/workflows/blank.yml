@@ -1,1 +1,298 @@
+name: NOVA-X APK Build
 
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      # --------------------------------------------------
+      # 1. Download repository
+      # --------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------
+      # 2. Setup Node.js
+      # --------------------------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # --------------------------------------------------
+      # 3. Find NOVA-X ZIP
+      # --------------------------------------------------
+      - name: Find NOVA-X ZIP
+        run: |
+          echo "Repository contents:"
+          ls -la
+
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in repository root."
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------
+      # 4. Extract ZIP
+      # --------------------------------------------------
+      - name: Extract NOVA-X project
+        run: |
+          rm -rf nova_project
+          mkdir -p nova_project
+
+          unzip -q "$ZIP_FILE" -d nova_project
+
+          echo "Extracted project:"
+          find nova_project -maxdepth 3 -type f | sort | head -200
+
+      # --------------------------------------------------
+      # 5. Locate package.json automatically
+      # --------------------------------------------------
+      - name: Locate NOVA-X project
+        run: |
+          PACKAGE_FILE=$(find nova_project \
+            -type f \
+            -name "package.json" \
+            -print \
+            -quit)
+
+          if [ -z "$PACKAGE_FILE" ]; then
+            echo "ERROR: package.json was not found inside the ZIP."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PACKAGE_FILE")
+
+          echo "NOVA-X project directory:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------
+      # 6. Verify project
+      # --------------------------------------------------
+      - name: Verify NOVA-X project
+        run: |
+          cd "$PROJECT_DIR"
+
+          echo "Project directory:"
+          pwd
+
+          echo ""
+          echo "Project files:"
+          ls -la
+
+          echo ""
+          echo "Checking required files..."
+
+          test -f package.json || {
+            echo "ERROR: package.json missing"
+            exit 1
+          }
+
+          test -f index.html || {
+            echo "ERROR: index.html missing"
+            exit 1
+          }
+
+          test -d src || {
+            echo "ERROR: src directory missing"
+            exit 1
+          }
+
+          echo "Project structure looks valid."
+
+      # --------------------------------------------------
+      # 7. Install dependencies
+      # --------------------------------------------------
+      - name: Install npm dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npm install
+
+      # --------------------------------------------------
+      # 8. Make sure Vue plugin exists
+      # --------------------------------------------------
+      - name: Install Vue/Vite build tools
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npm install --save-dev \
+            vite@7 \
+            @vitejs/plugin-vue@6 \
+            vue@3
+
+      # --------------------------------------------------
+      # 9. Create Vite Vue configuration if missing
+      # --------------------------------------------------
+      - name: Ensure Vite Vue configuration
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ ! -f vite.config.js ] && [ ! -f vite.config.mjs ] && [ ! -f vite.config.ts ]; then
+
+            cat > vite.config.js <<'EOF'
+          import { defineConfig } from 'vite'
+          import vue from '@vitejs/plugin-vue'
+
+          export default defineConfig({
+            plugins: [vue()]
+          })
+          EOF
+
+            echo "Created vite.config.js"
+          else
+            echo "Vite configuration already exists."
+          fi
+
+      # --------------------------------------------------
+      # 10. Build Vue application
+      # --------------------------------------------------
+      - name: Build Vue application
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npm run build
+
+      # --------------------------------------------------
+      # 11. Verify web build
+      # --------------------------------------------------
+      - name: Verify web build
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ ! -d dist ]; then
+            echo "ERROR: dist directory was not generated."
+            exit 1
+          fi
+
+          echo "Vue build successful."
+          find dist -maxdepth 2 -type f | sort
+
+      # --------------------------------------------------
+      # 12. Install Capacitor
+      # --------------------------------------------------
+      - name: Install Capacitor
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npm install --no-save \
+            @capacitor/core@7 \
+            @capacitor/cli@7 \
+            @capacitor/android@7
+
+      # --------------------------------------------------
+      # 13. Initialize Capacitor
+      # --------------------------------------------------
+      - name: Initialize Capacitor
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ ! -f capacitor.config.json ] && \
+             [ ! -f capacitor.config.ts ] && \
+             [ ! -f capacitor.config.js ]; then
+
+            npx cap init NOVA-X com.novax --web-dir dist
+
+          else
+            echo "Capacitor configuration already exists."
+          fi
+
+      # --------------------------------------------------
+      # 14. Add Android platform
+      # --------------------------------------------------
+      - name: Add Android platform
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          else
+            echo "Android platform already exists."
+          fi
+
+      # --------------------------------------------------
+      # 15. Sync web application with Android
+      # --------------------------------------------------
+      - name: Sync Capacitor Android
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          npx cap sync android
+
+      # --------------------------------------------------
+      # 16. Setup Java
+      # --------------------------------------------------
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # --------------------------------------------------
+      # 17. Setup Android SDK
+      # --------------------------------------------------
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # --------------------------------------------------
+      # 18. Install Android SDK packages
+      # --------------------------------------------------
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
+
+          yes | sdkmanager --licenses || true
+
+      # --------------------------------------------------
+      # 19. Build APK
+      # --------------------------------------------------
+      - name: Build Debug APK
+        working-directory: ${{ env.PROJECT_DIR }}/android
+        run: |
+          chmod +x gradlew
+
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace
+
+      # --------------------------------------------------
+      # 20. Verify APK
+      # --------------------------------------------------
+      - name: Verify APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo ""
+          echo "======================================"
+          echo "NOVA-X APK BUILD SUCCESSFUL"
+          echo "======================================"
+          echo ""
+          ls -lh "$APK"
+
+      # --------------------------------------------------
+      # 21. Upload APK
+      # --------------------------------------------------
+      - name: Upload NOVA-X APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-X-debug-apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
