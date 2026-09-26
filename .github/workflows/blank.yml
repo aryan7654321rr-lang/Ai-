@@ -23,24 +23,71 @@ jobs:
         with:
           node-version: 22
 
-      - name: Check project
+      - name: Find NOVA-X ZIP
         run: |
-          echo "Node:"
-          node --version
-          echo "NPM:"
-          npm --version
+          echo "Files in repository:"
+          ls -la
+
+          ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: No ZIP file found in repository root."
+            exit 1
+          fi
+
+          echo "Found: $ZIP_FILE"
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+
+      - name: Extract NOVA-X project
+        run: |
+          rm -rf nova_project
+          mkdir -p nova_project
+
+          unzip -q "$ZIP_FILE" -d nova_project
+
+          echo "Extracted files:"
+          find nova_project -maxdepth 3 -type f | sort | head -200
+
+      - name: Locate project root
+        run: |
+          PROJECT_ROOT=$(find nova_project -name package.json -type f -print -quit)
+
+          if [ -z "$PROJECT_ROOT" ]; then
+            echo "ERROR: package.json was not found inside the ZIP."
+            echo "The ZIP does not appear to contain the NOVA-X project."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$PROJECT_ROOT")
+
+          echo "NOVA-X project found at:"
+          echo "$PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Check NOVA-X project
+        run: |
+          cd "$PROJECT_DIR"
+
+          echo "Project root:"
+          pwd
+
           echo "Project files:"
           ls -la
-          echo "Package file:"
-          test -f package.json && echo "package.json found" || (echo "ERROR: package.json missing" && exit 1)
 
-      - name: Install dependencies
+          echo "package.json:"
+          cat package.json
+
+      - name: Install npm dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
         run: npm install
 
       - name: Build Vue application
+        working-directory: ${{ env.PROJECT_DIR }}
         run: npm run build
 
       - name: Install Capacitor
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm install --no-save \
             @capacitor/core@7 \
@@ -48,14 +95,17 @@ jobs:
             @capacitor/android@7
 
       - name: Initialize Capacitor
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npx cap init NOVA-X com.novax --web-dir dist
 
       - name: Add Android platform
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npx cap add android
 
-      - name: Sync web application to Android
+      - name: Sync Android project
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npx cap sync android
 
@@ -68,23 +118,37 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK
+      - name: Install Android SDK packages
         run: |
           sdkmanager "platform-tools"
           sdkmanager "platforms;android-35"
           sdkmanager "build-tools;35.0.0"
+
           yes | sdkmanager --licenses || true
 
-      - name: Build Debug APK
-        working-directory: android
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}/android
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
+
+      - name: Verify APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK_PATH" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          echo "APK successfully generated:"
+          ls -lh "$APK_PATH"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: NOVA-X-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
