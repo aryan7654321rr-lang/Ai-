@@ -169,10 +169,7 @@ jobs:
       # VERIFY JAVA
       - name: Verify Java
         run: |
-          echo "Java version:"
           java -version
-
-          echo "Javac version:"
           javac -version
 
       # ANDROID SDK
@@ -222,9 +219,6 @@ jobs:
       - name: Generate Gradle wrapper
         working-directory: ${{ env.PROJECT_DIR }}/android
         run: |
-          echo "Android project:"
-          ls -la
-
           gradle wrapper --gradle-version 8.11.1
 
           if [ ! -f gradlew ]; then
@@ -256,10 +250,6 @@ jobs:
           echo "========================================"
 
           if [ -f "$GITHUB_WORKSPACE/gradle-build.log" ]; then
-
-            echo ""
-            echo "---- FAILURE / WHAT WENT WRONG ----"
-
             grep -n -A 40 -B 10 \
               -E "FAILURE:|What went wrong:|Execution failed for task|Caused by:" \
               "$GITHUB_WORKSPACE/gradle-build.log" || true
@@ -268,23 +258,14 @@ jobs:
             echo "---- LAST 100 LINES ----"
 
             tail -n 100 "$GITHUB_WORKSPACE/gradle-build.log"
-
           else
             echo "gradle-build.log was not created."
           fi
 
-      # FIND APK
-      - name: Find APK
-        working-directory: ${{ env.PROJECT_DIR }}
+      # LOCATE APK
+      - name: Locate APK
         run: |
-          echo "Generated APK files:"
-
-          find . \
-            -type f \
-            -name "*.apk" \
-            -print
-
-          APK=$(find . \
+          APK=$(find "${PROJECT_DIR}/android" \
             -type f \
             -path "*/build/outputs/apk/debug/*.apk" \
             -print \
@@ -295,6 +276,9 @@ jobs:
             exit 1
           fi
 
+          # Convert to a clean workspace-relative path.
+          APK="${APK#./}"
+
           echo "APK found:"
           echo "$APK"
 
@@ -302,7 +286,6 @@ jobs:
 
       # APK INFORMATION
       - name: APK information
-        working-directory: ${{ env.PROJECT_DIR }}
         run: |
           ls -lh "$APK_PATH"
 
@@ -311,6 +294,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: NOVA-X-debug-apk
-          path: ${{ env.PROJECT_DIR }}/${{ env.APK_PATH }}
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 14
