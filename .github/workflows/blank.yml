@@ -16,23 +16,17 @@ jobs:
 
     steps:
 
-      # ================================================
       # CHECKOUT
-      # ================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ================================================
       # NODE.JS
-      # ================================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      # ================================================
       # FIND ZIP
-      # ================================================
       - name: Find NOVA-X ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
@@ -42,14 +36,12 @@ jobs:
             exit 1
           fi
 
-          echo "Found:"
+          echo "Found ZIP:"
           echo "$ZIP_FILE"
 
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
-      # ================================================
       # EXTRACT ZIP
-      # ================================================
       - name: Extract NOVA-X
         run: |
           rm -rf nova_project
@@ -59,9 +51,7 @@ jobs:
 
           echo "ZIP extracted."
 
-      # ================================================
       # FIND PROJECT
-      # ================================================
       - name: Locate NOVA-X project
         run: |
           PACKAGE_FILE=$(find nova_project \
@@ -79,12 +69,10 @@ jobs:
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "Project:"
+          echo "Project directory:"
           echo "$PROJECT_DIR"
 
-      # ================================================
       # VERIFY PROJECT
-      # ================================================
       - name: Verify project
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -94,26 +82,20 @@ jobs:
 
           echo "Project verified."
 
-      # ================================================
       # NPM
-      # ================================================
       - name: Install npm dependencies
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm install
 
-      # ================================================
       # VUE + VITE
-      # ================================================
       - name: Ensure Vue and Vite
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm install vue@3
           npm install --save-dev vite@7 @vitejs/plugin-vue@6
 
-      # ================================================
       # VITE CONFIG
-      # ================================================
       - name: Ensure Vite Vue configuration
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -132,17 +114,13 @@ jobs:
 
           fi
 
-      # ================================================
       # BUILD WEB APP
-      # ================================================
       - name: Build Vue application
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm run build
 
-      # ================================================
       # VERIFY WEB BUILD
-      # ================================================
       - name: Verify web build
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -151,9 +129,7 @@ jobs:
 
           echo "Vue build successful."
 
-      # ================================================
       # CAPACITOR
-      # ================================================
       - name: Install Capacitor
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -162,9 +138,7 @@ jobs:
             @capacitor/cli@7 \
             @capacitor/android@7
 
-      # ================================================
       # CAPACITOR CONFIG
-      # ================================================
       - name: Configure Capacitor
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -175,9 +149,7 @@ jobs:
             npx cap init NOVA-X com.novax --web-dir dist
           fi
 
-      # ================================================
       # CREATE ANDROID PROJECT
-      # ================================================
       - name: Create Android project
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -187,18 +159,23 @@ jobs:
 
           npx cap sync android
 
-      # ================================================
-      # JAVA
-      # ================================================
+      # JAVA 21
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
-      # ================================================
+      # VERIFY JAVA
+      - name: Verify Java
+        run: |
+          echo "Java version:"
+          java -version
+
+          echo "Javac version:"
+          javac -version
+
       # ANDROID SDK
-      # ================================================
       - name: Setup Android SDK
         run: |
           if [ -z "$ANDROID_HOME" ]; then
@@ -212,9 +189,7 @@ jobs:
             echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           fi
 
-      # ================================================
       # ANDROID SDK PACKAGES
-      # ================================================
       - name: Install Android SDK packages
         run: |
           SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
@@ -237,17 +212,13 @@ jobs:
 
           yes | "$SDKMANAGER" --licenses || true
 
-      # ================================================
-      # INSTALL GRADLE
-      # ================================================
+      # GRADLE
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
 
-      # ================================================
       # GENERATE GRADLE WRAPPER
-      # ================================================
       - name: Generate Gradle wrapper
         working-directory: ${{ env.PROJECT_DIR }}/android
         run: |
@@ -265,19 +236,44 @@ jobs:
 
           echo "Gradle wrapper generated successfully."
 
-      # ================================================
       # BUILD APK
-      # ================================================
       - name: Build Debug APK
         working-directory: ${{ env.PROJECT_DIR }}/android
         run: |
+          set -o pipefail
+
           ./gradlew assembleDebug \
             --no-daemon \
-            --stacktrace
+            --stacktrace \
+            --info 2>&1 | tee "$GITHUB_WORKSPACE/gradle-build.log"
 
-      # ================================================
+      # SHOW FAILURE DETAILS
+      - name: Show Gradle failure details
+        if: failure()
+        run: |
+          echo "========================================"
+          echo "GRADLE BUILD FAILURE DETAILS"
+          echo "========================================"
+
+          if [ -f "$GITHUB_WORKSPACE/gradle-build.log" ]; then
+
+            echo ""
+            echo "---- FAILURE / WHAT WENT WRONG ----"
+
+            grep -n -A 40 -B 10 \
+              -E "FAILURE:|What went wrong:|Execution failed for task|Caused by:" \
+              "$GITHUB_WORKSPACE/gradle-build.log" || true
+
+            echo ""
+            echo "---- LAST 100 LINES ----"
+
+            tail -n 100 "$GITHUB_WORKSPACE/gradle-build.log"
+
+          else
+            echo "gradle-build.log was not created."
+          fi
+
       # FIND APK
-      # ================================================
       - name: Find APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -304,17 +300,13 @@ jobs:
 
           echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
-      # ================================================
       # APK INFORMATION
-      # ================================================
       - name: APK information
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           ls -lh "$APK_PATH"
 
-      # ================================================
       # UPLOAD APK
-      # ================================================
       - name: Upload NOVA-X APK
         uses: actions/upload-artifact@v4
         with:
