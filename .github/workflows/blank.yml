@@ -15,41 +15,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      # 3. Find ZIP
       - name: Find NOVA-X ZIP
         run: |
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No ZIP file found."
+            echo "ERROR: No ZIP file found in repository root."
             exit 1
           fi
 
           echo "Found ZIP: $ZIP_FILE"
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
 
-      # 4. Extract ZIP
       - name: Extract NOVA-X
         run: |
           rm -rf nova_project
-          mkdir nova_project
+          mkdir -p nova_project
 
           unzip -q "$ZIP_FILE" -d nova_project
 
-          echo "ZIP extracted successfully."
+          echo "Extracted files:"
+          find nova_project -maxdepth 3 -type f | sort | head -200
 
-      # 5. Find project
-      - name: Locate NOVA-X project
+      - name: Locate project
         run: |
           PACKAGE_FILE=$(find nova_project \
             -type f \
@@ -58,46 +54,37 @@ jobs:
             -quit)
 
           if [ -z "$PACKAGE_FILE" ]; then
-            echo "ERROR: package.json was not found inside the ZIP."
+            echo "ERROR: package.json was not found."
             exit 1
           fi
 
           PROJECT_DIR=$(dirname "$PACKAGE_FILE")
 
-          echo "Project directory: $PROJECT_DIR"
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      # 6. Verify project
+          echo "Project directory:"
+          echo "$PROJECT_DIR"
+
       - name: Verify project
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          echo "Project:"
-          pwd
-
-          echo "Files:"
-          ls -la
-
           test -f package.json
           test -f index.html
           test -d src
 
-      # 7. Install npm dependencies
-      - name: Install dependencies
+          echo "NOVA-X project is valid."
+
+      - name: Install npm dependencies
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm install
 
-      # 8. Ensure Vue/Vite
-      - name: Ensure Vue build tools
+      - name: Ensure Vue and Vite
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          npm install --save-dev \
-            vite@7 \
-            @vitejs/plugin-vue@6
-
+          npm install --save-dev vite@7 @vitejs/plugin-vue@6
           npm install vue@3
 
-      # 9. Ensure Vite configuration
       - name: Ensure Vite configuration
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -114,23 +101,19 @@ jobs:
           })
           EOF
 
-            echo "Created vite.config.js"
           fi
 
-      # 10. Build Vue
       - name: Build Vue application
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npm run build
 
-      # 11. Verify dist
-      - name: Verify web build
+      - name: Verify Vue build
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           test -d dist
-          echo "Vue build successful."
+          echo "Vue build completed successfully."
 
-      # 12. Install Capacitor
       - name: Install Capacitor
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
@@ -139,8 +122,7 @@ jobs:
             @capacitor/cli@7 \
             @capacitor/android@7
 
-      # 13. Initialize Capacitor
-      - name: Initialize Capacitor
+      - name: Configure Capacitor
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           if [ ! -f capacitor.config.json ] && \
@@ -150,60 +132,84 @@ jobs:
             npx cap init NOVA-X com.novax --web-dir dist
           fi
 
-      # 14. Add Android
-      - name: Add Android platform
+      - name: Create Android project
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           if [ ! -d android ]; then
             npx cap add android
+          else
+            echo "Android directory already exists."
           fi
 
-      # 15. Sync Capacitor
-      - name: Sync Android
+      - name: Sync Capacitor
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
           npx cap sync android
 
-      # 16. Java
+      # --------------------------------------------------
+      # Find the actual Gradle wrapper
+      # --------------------------------------------------
+      - name: Locate Gradle wrapper
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "Searching for gradlew..."
+
+          find . \
+            -type f \
+            -name "gradlew" \
+            -print
+
+          GRADLEW=$(find . \
+            -type f \
+            -name "gradlew" \
+            -print \
+            -quit)
+
+          if [ -z "$GRADLEW" ]; then
+            echo "ERROR: Gradle wrapper was not generated."
+            echo ""
+            echo "Android directory contents:"
+            find android -maxdepth 4 -type f | sort || true
+            exit 1
+          fi
+
+          GRADLE_DIR=$(dirname "$GRADLEW")
+
+          echo "Found Gradle wrapper:"
+          echo "$GRADLEW"
+
+          echo "GRADLEW=$GRADLEW" >> "$GITHUB_ENV"
+          echo "GRADLE_DIR=$GRADLE_DIR" >> "$GITHUB_ENV"
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      # 17. Use preinstalled Android SDK
-      - name: Setup Android SDK environment
+      - name: Setup Android SDK
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-
           if [ -z "$ANDROID_HOME" ]; then
             export ANDROID_HOME="/usr/local/lib/android/sdk"
             echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           fi
 
           echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
-          if [ -d "$ANDROID_HOME/cmdline-tools/16.0/bin" ]; then
-            echo "$ANDROID_HOME/cmdline-tools/16.0/bin" >> "$GITHUB_PATH"
+          if [ -d "$ANDROID_HOME/cmdline-tools/latest/bin" ]; then
+            echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
           fi
 
-          echo "Android SDK:"
-          ls -la "$ANDROID_HOME" || true
-
-      # 18. Install only required Android packages
-      - name: Install Android packages
+      - name: Install Android SDK packages
         run: |
           SDKMANAGER=""
 
           if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
             SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          elif [ -x "$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager" ]; then
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
           else
             SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" \
-              -name sdkmanager \
               -type f \
+              -name sdkmanager \
               -print \
               -quit)
           fi
@@ -213,10 +219,7 @@ jobs:
             exit 1
           fi
 
-          echo "Using sdkmanager:"
-          echo "$SDKMANAGER"
-
-          "$SDKMANAGER" --version
+          echo "Using: $SDKMANAGER"
 
           "$SDKMANAGER" "platform-tools"
           "$SDKMANAGER" "platforms;android-35"
@@ -224,40 +227,54 @@ jobs:
 
           yes | "$SDKMANAGER" --licenses || true
 
-      # 19. Build APK
+      # --------------------------------------------------
+      # Build using the discovered Gradle wrapper
+      # --------------------------------------------------
       - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_DIR }}/android
+        working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          chmod +x gradlew
+          chmod +x "$GRADLEW"
 
-          ./gradlew assembleDebug \
+          "$GRADLEW" \
+            assembleDebug \
             --no-daemon \
             --stacktrace
 
-      # 20. Verify APK
-      - name: Verify APK
+      - name: Find generated APK
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          echo "Searching for APK..."
 
-          if [ ! -f "$APK" ]; then
-            echo "ERROR: APK was not generated."
+          find . \
+            -type f \
+            -name "*.apk" \
+            -print
+
+          APK=$(find . \
+            -type f \
+            -path "*/build/outputs/apk/debug/*.apk" \
+            -print \
+            -quit)
+
+          if [ -z "$APK" ]; then
+            echo "ERROR: No debug APK was generated."
             exit 1
           fi
 
-          echo ""
-          echo "========================================"
-          echo "       NOVA-X APK BUILD SUCCESS"
-          echo "========================================"
-          echo ""
+          echo "APK found:"
+          echo "$APK"
 
-          ls -lh "$APK"
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
-      # 21. Upload APK
-      - name: Upload APK
+      - name: Show APK information
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          ls -lh "$APK_PATH"
+
+      - name: Upload NOVA-X APK
         uses: actions/upload-artifact@v4
         with:
           name: NOVA-X-debug-apk
-          path: ${{ env.PROJECT_DIR }}/android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJECT_DIR }}/${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 14
